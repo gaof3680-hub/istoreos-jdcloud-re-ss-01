@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 720
 
     steps:
       - name: Checkout build kit
@@ -14,7 +15,9 @@ jobs:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo apt-get clean
           docker system prune -af || true
+          df -h /
 
       - name: Install build dependencies
         run: |
@@ -35,14 +38,22 @@ jobs:
           WORK_DIR="$GITHUB_WORKSPACE/work" JOBS="$(nproc)" ./build-istoreos-re-ss-01.sh
 
       - name: Collect firmware
+        if: always()
         run: |
           mkdir -p artifact
-          cp work/istoreos/bin/targets/qualcommax/ipq60xx/*jdcloud_re-ss-01* artifact/ || true
-          cp work/istoreos/bin/targets/qualcommax/ipq60xx/sha256sums artifact/ || true
-          ls -lh artifact
+          # 收集固件文件
+          cp work/istoreos/bin/targets/qualcommax/ipq60xx/*jdcloud_re-ss-01* artifact/ 2>/dev/null || true
+          cp work/istoreos/bin/targets/qualcommax/ipq60xx/sha256sums artifact/ 2>/dev/null || true
+          # 收集编译日志（用于排查问题）
+          if [ -f work/istoreos/logs/ ]; then
+            tar czf artifact/build-logs.tar.gz -C work/istoreos logs/ 2>/dev/null || true
+          fi
+          ls -lh artifact/ || true
 
       - name: Upload firmware
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: istoreos-jdcloud-re-ss-01
           path: artifact/
+          retention-days: 30

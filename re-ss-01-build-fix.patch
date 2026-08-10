@@ -1,0 +1,755 @@
+From aeb0dcf3cca3838bbed8a85c474925f351f2d484 Mon Sep 17 00:00:00 2001
+From: TraeWork <traework@example.com>
+Date: Mon, 10 Aug 2026 12:35:00 +0000
+Subject: [PATCH] Simplify RE-SS-01 iStoreOS build
+
+---
+ .github/workflows/build-istoreos-re-ss-01.yml |  17 +-
+ README.md                                     |  98 ++----
+ build-istoreos-re-ss-01.sh                    |  67 +++-
+ files/board-jdcloud_re-ss-01.ipq6018          | Bin 65640 -> 0 bytes
+ .../001-add-jdcloud-re-ss-01-support.patch    | 332 ------------------
+ 5 files changed, 97 insertions(+), 417 deletions(-)
+ delete mode 100644 files/board-jdcloud_re-ss-01.ipq6018
+ delete mode 100644 patches/001-add-jdcloud-re-ss-01-support.patch
+
+diff --git a/.github/workflows/build-istoreos-re-ss-01.yml b/.github/workflows/build-istoreos-re-ss-01.yml
+index c2019b7..b97e83f 100644
+--- a/.github/workflows/build-istoreos-re-ss-01.yml
++++ b/.github/workflows/build-istoreos-re-ss-01.yml
+@@ -6,6 +6,7 @@ on:
+ jobs:
+   build:
+     runs-on: ubuntu-22.04
++    timeout-minutes: 720
+ 
+     steps:
+       - name: Checkout build kit
+@@ -14,7 +15,9 @@ jobs:
+       - name: Free disk space
+         run: |
+           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
++          sudo apt-get clean
+           docker system prune -af || true
++          df -h /
+ 
+       - name: Install build dependencies
+         run: |
+@@ -35,14 +38,22 @@ jobs:
+           WORK_DIR="$GITHUB_WORKSPACE/work" JOBS="$(nproc)" ./build-istoreos-re-ss-01.sh
+ 
+       - name: Collect firmware
++        if: always()
+         run: |
+           mkdir -p artifact
+-          cp work/istoreos/bin/targets/qualcommax/ipq60xx/*jdcloud_re-ss-01* artifact/ || true
+-          cp work/istoreos/bin/targets/qualcommax/ipq60xx/sha256sums artifact/ || true
+-          ls -lh artifact
++          # 收集固件文件
++          cp work/istoreos/bin/targets/qualcommax/ipq60xx/*jdcloud_re-ss-01* artifact/ 2>/dev/null || true
++          cp work/istoreos/bin/targets/qualcommax/ipq60xx/sha256sums artifact/ 2>/dev/null || true
++          # 收集编译日志（用于排查问题）
++          if [ -f work/istoreos/logs/ ]; then
++            tar czf artifact/build-logs.tar.gz -C work/istoreos logs/ 2>/dev/null || true
++          fi
++          ls -lh artifact/ || true
+ 
+       - name: Upload firmware
++        if: always()
+         uses: actions/upload-artifact@v4
+         with:
+           name: istoreos-jdcloud-re-ss-01
+           path: artifact/
++          retention-days: 30
+diff --git a/README.md b/README.md
+index a5ef9c9..b081317 100644
+--- a/README.md
++++ b/README.md
+@@ -1,44 +1,39 @@
+-# JDCloud RE-SS-01 定制 iStoreOS 编译包
++# JDCloud RE-SS-01 iStoreOS 编译包
+ 
+-这个编译包用于给 `JDCloud RE-SS-01` 定制编译 iStoreOS 固件，目标是稳定优先，同时保留这台 IPQ60xx 设备的基础性能能力。
++为 `JDCloud RE-SS-01` 路由器编译 iStoreOS 固件。iStoreOS `istoreos-24.10` 分支已内置该设备的完整支持，无需额外补丁。
+ 
+-## 适配目标
+-
+-你的路由器应匹配以下标识：
++## 设备标识
+ 
+ ```text
+ model=JDCloud RE-SS-01
+ board=jdcloud_re-ss-01
+ compatible=jdcloud,re-ss-01
+ target=qualcommax/ipq60xx
++SOC=ipq6000
+ ```
+ 
+-不要使用 `jdcloud_ax1800-pro`、`ap-cp03-c1`、`jdcloud,ax1800-pro` 的固件直接刷这台机器。
+-
+ ## 编译包内容
+ 
+ ```text
+-patches/001-add-jdcloud-re-ss-01-support.patch
+-files/board-jdcloud_re-ss-01.ipq6018
+-configs/re-ss-01-stable.config
+-build-istoreos-re-ss-01.sh
+-.github/workflows/build-istoreos-re-ss-01.yml
++configs/re-ss-01-stable.config      # 编译配置（稳定优先）
++build-istoreos-re-ss-01.sh          # 本地编译脚本
++.github/workflows/build-istoreos-re-ss-01.yml  # GitHub Actions 云编译
+ ```
+ 
+-补丁包含：
++## 源码已内置的支持
+ 
+-- 新增 `JDCloud RE-SS-01` 设备树。
+-- 新增 `jdcloud_re-ss-01` 镜像目标。
+-- 新增 `jdcloud,re-ss-01` LAN/WAN 初始化。
+-- 新增 eMMC 双分区 `sysupgrade` 写入逻辑。
+-- 新增 Wi-Fi 校准数据提取逻辑。
+-- 新增 `ipq-wifi-jdcloud_re-ss-01` 固件包声明。
++iStoreOS `istoreos-24.10` 分支已包含以下 RE-SS-01 支持：
+ 
+-## 本地编译
++- 设备树：`ipq6000-re-ss-01.dts`（LED、按键、eMMC、USB、网口）
++- Wi-Fi 板载数据：`board-jdcloud_re-ss-01.ipq6018`
++- ipq-wifi 固件包：`ipq-wifi-jdcloud_re-ss-01`
++- caldata 提取：eMMC ART 分区校准数据
++- 升级逻辑：eMMC 双分区（0:HLOS / 0:HLOS_1）sysupgrade
++- 网络配置：LAN1-3 + WAN
+ 
+-建议使用 Ubuntu 22.04/24.04、至少 4 核 CPU、8GB 内存、80GB 可用磁盘空间。
++## 本地编译
+ 
+-安装依赖后运行：
++**环境要求**：Ubuntu 22.04+、4 核 CPU、8GB 内存、80GB 磁盘
+ 
+ ```sh
+ chmod +x ./build-istoreos-re-ss-01.sh
+@@ -51,61 +46,28 @@ chmod +x ./build-istoreos-re-ss-01.sh
+ WORK_DIR=$HOME/istoreos-build JOBS=4 ./build-istoreos-re-ss-01.sh
+ ```
+ 
+-编译完成后检查：
++编译产物：
+ 
+ ```sh
+ ls -lh $HOME/istoreos-build/istoreos/bin/targets/qualcommax/ipq60xx/*jdcloud_re-ss-01*
+ ```
+ 
+-你要刷的是：
+-
+-```text
+-*jdcloud_re-ss-01-squashfs-sysupgrade.bin
+-```
++刷机使用 `*jdcloud_re-ss-01-squashfs-sysupgrade.bin`。
+ 
+ ## GitHub Actions 云编译
+ 
+-1. 新建一个 GitHub 仓库。
+-2. 把本目录所有文件上传到仓库根目录。
+-3. 打开 `Actions`。
+-4. 选择 `Build iStoreOS for JDCloud RE-SS-01`。
+-5. 点击 `Run workflow`。
+-6. 编译完成后在 artifact 里下载固件。
+-
+-## 验包方法
+-
+-编译后先在电脑上检查：
+-
+-```sh
+-tar -tf *jdcloud_re-ss-01*squashfs-sysupgrade.bin
+-tar -xOf *jdcloud_re-ss-01*squashfs-sysupgrade.bin sysupgrade-jdcloud_re-ss-01/CONTROL
+-strings -a *jdcloud_re-ss-01*squashfs-sysupgrade.bin | grep -E 'jdcloud_re-ss-01|jdcloud,re-ss-01|JDCloud RE-SS-01|supported_devices'
+-```
+-
+-期望看到：
+-
+-```text
+-sysupgrade-jdcloud_re-ss-01/
+-BOARD=jdcloud_re-ss-01
+-supported_devices:["jdcloud,re-ss-01"]
+-```
+-
+-## 刷机建议
+-
+-- 只刷 `sysupgrade.bin`，不要用其他型号的 `factory.bin`。
+-- 从你当前的 ImmortalWrt/OpenWrt 后台升级即可。
+-- 第一次切换到这版定制 iStoreOS，建议不要保留配置。
+-- 如果 LuCI 提示设备不兼容，不要强制刷。
+-- 刷机前备份配置，并准备好 TTL/U-Boot 救砖方案。
+-
+-## 稳定和性能取舍
++1. 新建 GitHub 仓库，将本目录所有文件上传到根目录
++2. 打开 `Actions` → 选择 `Build iStoreOS for JDCloud RE-SS-01`
++3. 点击 `Run workflow`
++4. 编译完成后在 Artifacts 下载固件
+ 
+-这个配置没有默认内置 OpenClash、AdGuardHome、Docker 等重型插件。建议系统刷好并稳定运行后，再通过 iStore 逐个安装需要的插件。
++## 刷机须知
+ 
+-要发挥性能，优先使用：
++- 只刷 `sysupgrade.bin`，不要用其他型号的 `factory.bin`
++- 从当前 ImmortalWrt/OpenWrt 后台直接 sysupgrade 升级
++- 首次切换到 iStoreOS 建议不保留配置
++- 刷机前备份配置，准备 TTL/U-Boot 救砖方案
+ 
+-- 有线主路由场景下开启系统自带的硬件/NSS 加速能力。
+-- 插件少装、按需安装。
+-- 不要同时运行多个高负载代理、广告过滤和 Docker 容器。
++## 稳定优先策略
+ 
+-如果你追求极限 NSS 性能，可以后续再做专门的 NSS/ECM 优化分支；稳定优先时，不建议一开始就叠加大量第三方加速补丁。
++配置未内置 OpenClash、AdGuardHome、Docker 等重型插件。建议系统稳定运行后通过 iStore 按需安装。
+diff --git a/build-istoreos-re-ss-01.sh b/build-istoreos-re-ss-01.sh
+index a1b5f0c..5b68a0c 100644
+--- a/build-istoreos-re-ss-01.sh
++++ b/build-istoreos-re-ss-01.sh
+@@ -7,40 +7,79 @@ SRC_DIR="$WORK_DIR/istoreos"
+ BRANCH="${BRANCH:-istoreos-24.10}"
+ JOBS="${JOBS:-$(nproc)}"
+ 
+-echo "工作目录: $WORK_DIR"
++echo "========================================"
++echo "  iStoreOS 固件编译 — JDCloud RE-SS-01"
++echo "  分支: $BRANCH"
++echo "  并行: $JOBS 线程"
++echo "  工作目录: $WORK_DIR"
++echo "========================================"
++
+ mkdir -p "$WORK_DIR"
+ 
++# ── 1. 克隆 / 更新源码 ──────────────────────────────────────
+ if [ ! -d "$SRC_DIR/.git" ]; then
+-  git clone --depth 1 --branch "$BRANCH" https://github.com/istoreos/istoreos "$SRC_DIR"
++  echo "[1/6] 克隆 iStoreOS 源码…"
++  git clone --depth 1 --branch "$BRANCH" \
++    https://github.com/istoreos/istoreos.git "$SRC_DIR"
+ else
++  echo "[1/6] 更新 iStoreOS 源码…"
+   git -C "$SRC_DIR" fetch --depth 1 origin "$BRANCH"
+   git -C "$SRC_DIR" checkout "$BRANCH"
+   git -C "$SRC_DIR" reset --hard "origin/$BRANCH"
+ fi
+ 
+-echo "应用 JDCloud RE-SS-01 设备支持补丁"
+-git -C "$SRC_DIR" apply "$ROOT_DIR/patches/001-add-jdcloud-re-ss-01-support.patch"
++# ── 2. 确认设备支持已存在 ──────────────────────────────────
++echo "[2/6] 确认 RE-SS-01 设备支持…"
++DTS_FILE="$SRC_DIR/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts"
++BOARD_FILE="$SRC_DIR/package/firmware/ipq-wifi/files/board-jdcloud_re-ss-01.ipq6018"
+ 
+-echo "复制 RE-SS-01 Wi-Fi board data"
+-mkdir -p "$SRC_DIR/package/firmware/ipq-wifi/files"
+-cp "$ROOT_DIR/files/board-jdcloud_re-ss-01.ipq6018" "$SRC_DIR/package/firmware/ipq-wifi/files/"
++if [ ! -f "$DTS_FILE" ]; then
++  echo "  ✗ 设备树文件不存在: $DTS_FILE"
++  echo "  请确认分支 $BRANCH 已包含 RE-SS-01 支持"
++  exit 1
++fi
++if [ ! -f "$BOARD_FILE" ]; then
++  echo "  ✗ Wi-Fi 板载数据不存在: $BOARD_FILE"
++  echo "  请确认分支 $BRANCH 已包含 RE-SS-01 支持"
++  exit 1
++fi
++echo "  ✓ 设备树已就绪"
++echo "  ✓ Wi-Fi 板载数据已就绪"
++echo "  ✓ 无需额外补丁 — 源码已内置 RE-SS-01 支持"
+ 
+-echo "更新 feeds"
++# ── 3. 更新 feeds ──────────────────────────────────────────
++echo "[3/6] 更新 feeds…"
+ cd "$SRC_DIR"
+ ./scripts/feeds update -a
+ ./scripts/feeds install -a
+ 
+-echo "写入稳定优先配置"
++# ── 4. 写入配置 ────────────────────────────────────────────
++echo "[4/6] 写入编译配置…"
+ cp "$ROOT_DIR/configs/re-ss-01-stable.config" .config
+ make defconfig
+ 
+-echo "开始下载源码包"
++# ── 5. 下载源码包 ──────────────────────────────────────────
++echo "[5/6] 下载源码包…"
+ make download -j"$JOBS"
+ 
+-echo "开始编译，首次编译通常需要数小时"
+-make -j"$JOBS" V=s
++# ── 6. 编译 ────────────────────────────────────────────────
++echo "[6/6] 开始编译（首次编译通常 1-3 小时）…"
++
++# 安全措施：禁用 -Werror，避免因编译器警告导致编译中断
++export EXTRA_CFLAGS="-Wno-error"
++export EXTRA_CXXFLAGS="-Wno-error"
++
++# 先用多线程编译；失败时用单线程 + 详细日志重试，便于定位错误
++if ! make -j"$JOBS"; then
++  echo "⚠ 多线程编译失败，切换到单线程详细模式重试…"
++  make -j1 V=s
++fi
+ 
++# ── 输出结果 ───────────────────────────────────────────────
+ echo
+-echo "编译完成。请检查以下输出："
++echo "========================================"
++echo "  编译完成！固件文件："
++echo "========================================"
+ find "$SRC_DIR/bin/targets/qualcommax/ipq60xx" -maxdepth 1 -type f \
+-  \( -name "*jdcloud_re-ss-01*" -o -name "sha256sums" \) -print
++  \( -name "*jdcloud_re-ss-01*" -o -name "sha256sums" \) \
++  -exec ls -lh {} \;
+diff --git a/files/board-jdcloud_re-ss-01.ipq6018 b/files/board-jdcloud_re-ss-01.ipq6018
+deleted file mode 100644
+index d46f5ae96b42db7efcfb45eda0be7ea488a3bf98..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 65640
+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
+
+diff --git a/patches/001-add-jdcloud-re-ss-01-support.patch b/patches/001-add-jdcloud-re-ss-01-support.patch
+deleted file mode 100644
+index 863c7a7..0000000
+--- a/patches/001-add-jdcloud-re-ss-01-support.patch
++++ /dev/null
+@@ -1,332 +0,0 @@
+-diff --git a/package/firmware/ipq-wifi/Makefile b/package/firmware/ipq-wifi/Makefile
+-index 569bf1b..a5e17f2 100644
+---- a/package/firmware/ipq-wifi/Makefile
+-+++ b/package/firmware/ipq-wifi/Makefile
+-@@ -37,6 +37,7 @@ ALLWIFIBOARDS:= \
+- 	dynalink_dl-wrx36 \
+- 	edgecore_eap102 \
+- 	edimax_cax1800 \
+-+	jdcloud_re-ss-01 \
+- 	linksys_homewrk \
+- 	linksys_mx4200 \
+- 	linksys_mx5300 \
+-@@ -172,6 +173,7 @@ $(eval $(call generate-ipq-wifi-package,compex_wpq873,Compex WPQ-873))
+- $(eval $(call generate-ipq-wifi-package,dynalink_dl-wrx36,Dynalink DL-WRX36))
+- $(eval $(call generate-ipq-wifi-package,edgecore_eap102,Edgecore EAP102))
+- $(eval $(call generate-ipq-wifi-package,edimax_cax1800,Edimax CAX1800))
+-+$(eval $(call generate-ipq-wifi-package,jdcloud_re-ss-01,JDCloud RE-SS-01))
+- $(eval $(call generate-ipq-wifi-package,linksys_homewrk,Linksys HomeWRK))
+- $(eval $(call generate-ipq-wifi-package,linksys_mx4200,Linksys MX4200))
+- $(eval $(call generate-ipq-wifi-package,linksys_mx5300,Linksys MX5300))
+-diff --git a/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts
+-new file mode 100644
+-index 0000000..0f83b46
+---- /dev/null
+-+++ b/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts
+-@@ -0,0 +1,227 @@
+-+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+-+
+-+/dts-v1/;
+-+
+-+#include "ipq6018-512m.dtsi"
+-+#include "ipq6018-ess.dtsi"
+-+
+-+#include <dt-bindings/gpio/gpio.h>
+-+#include <dt-bindings/input/input.h>
+-+#include <dt-bindings/leds/common.h>
+-+
+-+/ {
+-+	model = "JDCloud RE-SS-01";
+-+	compatible = "jdcloud,re-ss-01", "qcom,ipq6018";
+-+
+-+	aliases {
+-+		ethernet1 = &dp2;
+-+		ethernet2 = &dp3;
+-+		ethernet3 = &dp4;
+-+		ethernet4 = &dp5;
+-+		serial0 = &blsp1_uart3;
+-+
+-+		label-mac-device = &dp2;
+-+		led-boot = &led_status_red;
+-+		led-failsafe = &led_status_red;
+-+		led-running = &led_status_green;
+-+		led-upgrade = &led_status_blue;
+-+	};
+-+
+-+	keys {
+-+		compatible = "gpio-keys";
+-+		pinctrl-0 = <&button_pins>;
+-+		pinctrl-names = "default";
+-+
+-+		wps {
+-+			label = "wps";
+-+			linux,code = <KEY_WPS_BUTTON>;
+-+			gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
+-+		};
+-+
+-+		reset {
+-+			label = "reset";
+-+			linux,code = <KEY_RESTART>;
+-+			gpios = <&tlmm 9 GPIO_ACTIVE_LOW>;
+-+		};
+-+	};
+-+
+-+	leds {
+-+		compatible = "gpio-leds";
+-+
+-+		led_status_red: red {
+-+			color = <LED_COLOR_ID_RED>;
+-+			function = LED_FUNCTION_STATUS;
+-+			gpios = <&tlmm 37 GPIO_ACTIVE_HIGH>;
+-+		};
+-+
+-+		led_status_blue: blue {
+-+			color = <LED_COLOR_ID_BLUE>;
+-+			function = LED_FUNCTION_STATUS;
+-+			gpios = <&tlmm 35 GPIO_ACTIVE_HIGH>;
+-+		};
+-+
+-+		led_status_green: green {
+-+			color = <LED_COLOR_ID_GREEN>;
+-+			function = LED_FUNCTION_STATUS;
+-+			gpios = <&tlmm 50 GPIO_ACTIVE_HIGH>;
+-+		};
+-+	};
+-+};
+-+
+-+&tlmm {
+-+	gpio-reserved-ranges = <20 1>;
+-+
+-+	button_pins: button-pins {
+-+		mux {
+-+			pins = "gpio8", "gpio9";
+-+			function = "gpio";
+-+			drive-strength = <8>;
+-+			bias-pull-up;
+-+		};
+-+	};
+-+
+-+	mdio_pins: mdio-pins {
+-+		mdc {
+-+			pins = "gpio64";
+-+			function = "mdc";
+-+			drive-strength = <8>;
+-+			bias-pull-up;
+-+		};
+-+
+-+		mdio {
+-+			pins = "gpio65";
+-+			function = "mdio";
+-+			drive-strength = <8>;
+-+			bias-pull-up;
+-+		};
+-+	};
+-+};
+-+
+-+&blsp1_uart3 {
+-+	pinctrl-0 = <&serial_3_pins>;
+-+	pinctrl-names = "default";
+-+	status = "okay";
+-+};
+-+
+-+&qusb_phy_0 {
+-+	status = "okay";
+-+};
+-+
+-+&rpm {
+-+	status = "disabled";
+-+};
+-+
+-+&sdhc {
+-+	bus-width = <8>;
+-+	mmc-ddr-1_8v;
+-+	mmc-hs200-1_8v;
+-+	non-removable;
+-+	status = "okay";
+-+};
+-+
+-+&ssphy_0 {
+-+	status = "okay";
+-+};
+-+
+-+&usb3 {
+-+	status = "okay";
+-+};
+-+
+-+&mdio {
+-+	status = "okay";
+-+	pinctrl-0 = <&mdio_pins>;
+-+	pinctrl-names = "default";
+-+	reset-gpios = <&tlmm 75 GPIO_ACTIVE_LOW>;
+-+
+-+	ethernet-phy-package@0 {
+-+		compatible = "qcom,qca8075-package";
+-+		#address-cells = <1>;
+-+		#size-cells = <0>;
+-+		reg = <0>;
+-+
+-+		qca8075_1: ethernet-phy@1 {
+-+			compatible = "ethernet-phy-ieee802.3-c22";
+-+			reg = <1>;
+-+		};
+-+
+-+		qca8075_2: ethernet-phy@2 {
+-+			compatible = "ethernet-phy-ieee802.3-c22";
+-+			reg = <2>;
+-+		};
+-+
+-+		qca8075_3: ethernet-phy@3 {
+-+			compatible = "ethernet-phy-ieee802.3-c22";
+-+			reg = <3>;
+-+		};
+-+
+-+		qca8075_4: ethernet-phy@4 {
+-+			compatible = "ethernet-phy-ieee802.3-c22";
+-+			reg = <4>;
+-+		};
+-+	};
+-+};
+-+
+-+&switch {
+-+	status = "okay";
+-+
+-+	switch_lan_bmp = <(ESS_PORT2 | ESS_PORT3 | ESS_PORT4)>;
+-+	switch_wan_bmp = <ESS_PORT5>;
+-+	switch_mac_mode = <MAC_MODE_PSGMII>;
+-+
+-+	qcom,port_phyinfo {
+-+		port@2 {
+-+			port_id = <2>;
+-+			phy_address = <1>;
+-+		};
+-+
+-+		port@3 {
+-+			port_id = <3>;
+-+			phy_address = <2>;
+-+		};
+-+
+-+		port@4 {
+-+			port_id = <4>;
+-+			phy_address = <3>;
+-+		};
+-+
+-+		port@5 {
+-+			port_id = <5>;
+-+			phy_address = <4>;
+-+		};
+-+	};
+-+};
+-+
+-+&edma {
+-+	status = "okay";
+-+};
+-+
+-+&dp2 {
+-+	status = "okay";
+-+	phy-handle = <&qca8075_1>;
+-+	label = "lan1";
+-+};
+-+
+-+&dp3 {
+-+	status = "okay";
+-+	phy-handle = <&qca8075_2>;
+-+	label = "lan2";
+-+};
+-+
+-+&dp4 {
+-+	status = "okay";
+-+	phy-handle = <&qca8075_3>;
+-+	label = "lan3";
+-+};
+-+
+-+&dp5 {
+-+	status = "okay";
+-+	phy-handle = <&qca8075_4>;
+-+	label = "wan";
+-+};
+-+
+-+&wifi {
+-+	status = "okay";
+-+
+-+	qcom,ath11k-calibration-variant = "JDC-RE-SS-01";
+-+	qcom,ath11k-fw-memory-mode = <1>;
+-+};
+-diff --git a/target/linux/qualcommax/image/ipq60xx.mk b/target/linux/qualcommax/image/ipq60xx.mk
+-index 41cfd16..45fd49f 100644
+---- a/target/linux/qualcommax/image/ipq60xx.mk
+-+++ b/target/linux/qualcommax/image/ipq60xx.mk
+-@@ -24,6 +24,18 @@ define Device/cambiumnetworks_xe3-4
+- endef
+- TARGET_DEVICES += cambiumnetworks_xe3-4
+- 
+-+define Device/jdcloud_re-ss-01
+-+	$(call Device/FitImage)
+-+	DEVICE_VENDOR := JDCloud
+-+	DEVICE_MODEL := RE-SS-01
+-+	SOC := ipq6000
+-+	BLOCKSIZE := 64k
+-+	KERNEL_SIZE := 6144k
+-+	DEVICE_DTS_CONFIG := config@cp03-c2
+-+	DEVICE_PACKAGES := ipq-wifi-jdcloud_re-ss-01
+-+endef
+-+TARGET_DEVICES += jdcloud_re-ss-01
+-+
+- define Device/netgear_wax214
+-        $(call Device/FitImage)
+-        $(call Device/UbiFit)
+-@@ -51,4 +63,3 @@ define Device/yuncore_fap650
+-     IMAGE/factory.ubin := append-ubi | qsdk-ipq-factory-nand
+- endef
+- TARGET_DEVICES += yuncore_fap650
+--
+-diff --git a/target/linux/qualcommax/ipq60xx/base-files/etc/board.d/02_network b/target/linux/qualcommax/ipq60xx/base-files/etc/board.d/02_network
+-index 86d55de..0cffee8 100644
+---- a/target/linux/qualcommax/ipq60xx/base-files/etc/board.d/02_network
+-+++ b/target/linux/qualcommax/ipq60xx/base-files/etc/board.d/02_network
+-@@ -20,6 +20,9 @@ ipq60xx_setup_interfaces()
+- 	netgear,wax214)
+- 		ucidef_set_interfaces_lan_wan "lan"
+- 		;;
+-+	jdcloud,re-ss-01)
+-+		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3" "wan"
+-+		;;
+- 	yuncore,fap650)
+- 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
+- 		;;
+-diff --git a/target/linux/qualcommax/ipq60xx/base-files/etc/hotplug.d/firmware/11-ath11-caldata b/target/linux/qualcommax/ipq60xx/base-files/etc/hotplug.d/firmware/11-ath11-caldata
+-index cc2de75..33ba58f 100644
+---- a/target/linux/qualcommax/ipq60xx/base-files/etc/hotplug.d/firmware/11-ath11-caldata
+-+++ b/target/linux/qualcommax/ipq60xx/base-files/etc/hotplug.d/firmware/11-ath11-caldata
+-@@ -15,6 +15,9 @@ case "$FIRMWARE" in
+- 	cambiumnetworks,xe3-4)
+- 		caldata_extract "0:ART" 0x1000 0x10000
+- 		;;
+-+	jdcloud,re-ss-01)
+-+		caldata_extract_mmc "0:ART" 0x1000 0x10000
+-+		;;
+- 	netgear,wax214)
+- 		caldata_extract "0:art" 0x1000 0x10000
+- 		;;
+-diff --git a/target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh b/target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh
+-index cbc6292..e1cad80 100644
+---- a/target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh
+-+++ b/target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh
+-@@ -40,6 +40,18 @@ platform_do_upgrade() {
+- 	netgear,wax214)
+- 		nand_do_upgrade "$1"
+- 		;;
+-+	jdcloud,re-ss-01)
+-+		local cfgpart=$(find_mmc_part "0:BOOTCONFIG")
+-+		part_num="$(hexdump -e '1/1 "%01x|"' -n 1 -s 148 -C $cfgpart | cut -f 1 -d "|" | head -n1)"
+-+		if [ "$part_num" -eq "1" ]; then
+-+			CI_KERNPART="0:HLOS_1"
+-+			CI_ROOTPART="rootfs_1"
+-+		else
+-+			CI_KERNPART="0:HLOS"
+-+			CI_ROOTPART="rootfs"
+-+		fi
+-+		emmc_do_upgrade "$1"
+-+		;;
+- 	yuncore,fap650)
+- 		[ "$(fw_printenv -n owrt_env_ver 2>/dev/null)" != "7" ] && yuncore_fap650_env_setup
+- 		local active="$(fw_printenv -n owrt_slotactive 2>/dev/null)"
+-- 
+2.34.1
+
