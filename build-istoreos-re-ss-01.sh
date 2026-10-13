@@ -31,18 +31,29 @@ echo "[2/7] Checking RE-SS-01 support..."
 DTS_FILE="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts"
 
 if [ ! -f "$DTS_FILE" ]; then
-  echo "  Downloading and applying device patch..."
+  echo "  Downloading and applying device patch (tolerant, --reject)..."
   curl -sL "$REPO_RAW/patches/001-add-jdcloud-re-ss-01-support.patch" -o /tmp/re-ss-01.patch
 
-  CALDATA_EXCL='*/hotplug.d/firmware/11-ath11-caldata'
-  if ! git apply --whitespace=fix --exclude="$CALDATA_EXCL" /tmp/re-ss-01.patch 2>/dev/null; then
-    if ! patch -p1 --fuzz=3 --exclude="$CALDATA_EXCL" < /tmp/re-ss-01.patch 2>/dev/null; then
-      echo "  ERROR: device patch (non-caldata part) failed to apply."
-      exit 1
-    fi
-  fi
-  echo "  Core device patch applied (dts/ipq60xx.mk/network/platform/ipq-wifi)"
+  # Apply as much as possible. The caldata hotplug script was renamed
+  # (11-ath11-caldata -> 11-ath11k-caldata) on newer branches, so that one
+  # hunk may be rejected; we insert the caldata entry separately below.
+  git apply --reject --whitespace=fix /tmp/re-ss-01.patch || true
+  find target/linux/qualcommax -name '*.rej' -delete 2>/dev/null || true
 
+  # Verify every essential part landed; abort with a clear message if not.
+  MISSING=0
+  grep -q "jdcloud_re-ss-01" package/firmware/ipq-wifi/Makefile 2>/dev/null || { echo "  MISSING: ipq-wifi Makefile entry"; MISSING=1; }
+  [ -f "$DTS_FILE" ] || { echo "  MISSING: $DTS_FILE"; MISSING=1; }
+  grep -q "jdcloud_re-ss-01" target/linux/qualcommax/image/ipq60xx.mk 2>/dev/null || { echo "  MISSING: ipq60xx.mk device"; MISSING=1; }
+  grep -q "jdcloud,re-ss-01" target/linux/qualcommax/ipq60xx/base-files/etc/board.d/02_network 2>/dev/null || { echo "  MISSING: 02_network"; MISSING=1; }
+  grep -q "jdcloud,re-ss-01" target/linux/qualcommax/ipq60xx/base-files/lib/upgrade/platform.sh 2>/dev/null || { echo "  MISSING: platform.sh"; MISSING=1; }
+  if [ "$MISSING" != "0" ]; then
+    echo "  ERROR: essential device support hunks did not apply on branch $BRANCH."
+    exit 1
+  fi
+  echo "  Core device patch verified (dts/ipq60xx.mk/network/platform/ipq-wifi)"
+
+  # Insert the caldata entry into whichever hotplug caldata script exists.
   CALDATA=$(ls target/linux/qualcommax/ipq60xx/base-files/etc/hotplug.d/firmware/11-ath11*-caldata 2>/dev/null | head -1 || true)
   if [ -z "$CALDATA" ]; then
     echo "  ERROR: no ath11 caldata hotplug script found."
@@ -62,6 +73,7 @@ if [ ! -f "$DTS_FILE" ]; then
       { print }
     ' "$CALDATA" > /tmp/caldata.tmp
     mv /tmp/caldata.tmp "$CALDATA"
+    grep -q "jdcloud,re-ss-01" "$CALDATA" || { echo "  ERROR: caldata insert failed"; exit 1; }
   else
     echo "  Caldata entry already present"
   fi
@@ -69,6 +81,7 @@ if [ ! -f "$DTS_FILE" ]; then
   mkdir -p package/firmware/ipq-wifi/files
   curl -sL "$REPO_RAW/files/board-jdcloud_re-ss-01.ipq6018" \
     -o package/firmware/ipq-wifi/files/board-jdcloud_re-ss-01.ipq6018
+  [ -s package/firmware/ipq-wifi/files/board-jdcloud_re-ss-01.ipq6018 ] || { echo "  ERROR: board wifi data download failed"; exit 1; }
   echo "  Device support injected"
 else
   echo "  Already supported"
