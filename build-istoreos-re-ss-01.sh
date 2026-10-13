@@ -31,16 +31,17 @@ echo "[2/7] Checking RE-SS-01 support..."
 DTS_FILE="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-01.dts"
 
 if [ ! -f "$DTS_FILE" ]; then
-  echo "  Downloading and applying device patch (tolerant, --reject)..."
+  echo "  Downloading device patch (patch -p1 --fuzz=3, tolerant)..."
   curl -sL "$REPO_RAW/patches/001-add-jdcloud-re-ss-01-support.patch" -o /tmp/re-ss-01.patch
 
-  # Apply as much as possible. The caldata hotplug script was renamed
-  # (11-ath11-caldata -> 11-ath11k-caldata) on newer branches, so that one
-  # hunk may be rejected; we insert the caldata entry separately below.
-  git apply --reject --whitespace=fix /tmp/re-ss-01.patch || true
-  find target/linux/qualcommax -name '*.rej' -delete 2>/dev/null || true
+  # The patch was written against 24.10; on 25.12 context lines drifted and the
+  # caldata hotplug script was renamed (11-ath11-caldata -> 11-ath11k-caldata).
+  # `patch --fuzz=3` tolerates the drift for the 4 essential files, and exits
+  # non-zero only because the caldata file is missing -- which we insert below.
+  # So: ignore the exit code, then VERIFY each essential entry landed.
+  patch -p1 --fuzz=3 --forward < /tmp/re-ss-01.patch || true
+  find target/linux/qualcommax package/firmware/ipq-wifi -name '*.orig' -delete 2>/dev/null || true
 
-  # Verify every essential part landed; abort with a clear message if not.
   MISSING=0
   grep -q "jdcloud_re-ss-01" package/firmware/ipq-wifi/Makefile 2>/dev/null || { echo "  MISSING: ipq-wifi Makefile entry"; MISSING=1; }
   [ -f "$DTS_FILE" ] || { echo "  MISSING: $DTS_FILE"; MISSING=1; }
