@@ -35,7 +35,7 @@ jobs:
       - name: Build firmware
         run: |
           chmod +x ./build-istoreos-re-ss-01.sh
-          WORK_DIR="$GITHUB_WORKSPACE/work" JOBS="$(nproc)" ./build-istoreos-re-ss-01.sh
+          BRANCH=istoreos-25.12 WORK_DIR="$GITHUB_WORKSPACE/work" JOBS="$(nproc)" ./build-istoreos-re-ss-01.sh
 
       - name: Collect firmware
         if: always()
