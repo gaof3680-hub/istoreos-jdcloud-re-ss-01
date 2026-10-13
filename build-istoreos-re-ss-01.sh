@@ -33,14 +33,38 @@ DTS_FILE="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq6000-re-ss-0
 if [ ! -f "$DTS_FILE" ]; then
   echo "  Downloading and applying device patch..."
   curl -sL "$REPO_RAW/patches/001-add-jdcloud-re-ss-01-support.patch" -o /tmp/re-ss-01.patch
-  git apply --whitespace=fix /tmp/re-ss-01.patch 2>/dev/null || patch -p1 --fuzz=3 < /tmp/re-ss-01.patch 2>/dev/null || {
-    echo "  Standard patch failed, applying manually..."
-    DTS_DIR="target/linux/qualcommax/files/arch/arm64/boot/dts/qcom"
-    mkdir -p "$DTS_DIR"
-    curl -sL "$REPO_RAW/patches/001-add-jdcloud-re-ss-01-support.patch" | head -5
-    echo "  ERROR: Could not apply patch. Check repo structure."
+
+  CALDATA_EXCL='*/hotplug.d/firmware/11-ath11-caldata'
+  if ! git apply --whitespace=fix --exclude="$CALDATA_EXCL" /tmp/re-ss-01.patch 2>/dev/null; then
+    if ! patch -p1 --fuzz=3 --exclude="$CALDATA_EXCL" < /tmp/re-ss-01.patch 2>/dev/null; then
+      echo "  ERROR: device patch (non-caldata part) failed to apply."
+      exit 1
+    fi
+  fi
+  echo "  Core device patch applied (dts/ipq60xx.mk/network/platform/ipq-wifi)"
+
+  CALDATA=$(ls target/linux/qualcommax/ipq60xx/base-files/etc/hotplug.d/firmware/11-ath11*-caldata 2>/dev/null | head -1 || true)
+  if [ -z "$CALDATA" ]; then
+    echo "  ERROR: no ath11 caldata hotplug script found."
     exit 1
-  }
+  fi
+  if ! grep -q "jdcloud,re-ss-01" "$CALDATA"; then
+    echo "  Inserting caldata entry into $CALDATA ..."
+    awk '
+      /^\tcambiumnetworks,xe3-4\)/ && !done { print; ins=1; next }
+      ins && /^\t\t;;$/ {
+        print "\tjdcloud,re-ss-01)"
+        print "\t\tcaldata_extract_mmc \"0:ART\" 0x1000 0x10000"
+        print "\t\t;;"
+        ins=0; done=1
+        next
+      }
+      { print }
+    ' "$CALDATA" > /tmp/caldata.tmp
+    mv /tmp/caldata.tmp "$CALDATA"
+  else
+    echo "  Caldata entry already present"
+  fi
 
   mkdir -p package/firmware/ipq-wifi/files
   curl -sL "$REPO_RAW/files/board-jdcloud_re-ss-01.ipq6018" \
